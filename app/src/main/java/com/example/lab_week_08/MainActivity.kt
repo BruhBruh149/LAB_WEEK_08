@@ -18,6 +18,7 @@ import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import com.example.lab_week_08.worker.FirstWorker
 import com.example.lab_week_08.worker.SecondWorker
+import com.example.lab_week_08.worker.ThirdWorker
 
 class MainActivity : AppCompatActivity() {
     private val workManager = WorkManager.getInstance(this)
@@ -32,7 +33,7 @@ class MainActivity : AppCompatActivity() {
             insets
         }
 
-        // Request notification permission for Android 13+
+        // Request notification permission for Android 13+ - FIXED NULL SAFETY
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
                 requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
@@ -57,11 +58,17 @@ class MainActivity : AppCompatActivity() {
             .setInputData(getIdInputData(SecondWorker.INPUT_DATA_ID, id))
             .build()
 
+        val thirdRequest = OneTimeWorkRequest
+            .Builder(ThirdWorker::class.java)
+            .setConstraints(networkConstraints)
+            .setInputData(getIdInputData(ThirdWorker.INPUT_DATA_ID, id))
+            .build()
+
+        // Execute sequence: FirstWorker -> SecondWorker -> ThirdWorker
         workManager.beginWith(firstRequest)
             .then(secondRequest)
+            .then(thirdRequest)
             .enqueue()
-
-        // FIXED: Null safety untuk WorkInfo
         workManager.getWorkInfoByIdLiveData(firstRequest.id)
             .observe(this) { info ->
                 if (info?.state?.isFinished == true) {
@@ -76,6 +83,14 @@ class MainActivity : AppCompatActivity() {
                     launchNotificationService()
                 }
             }
+
+        workManager.getWorkInfoByIdLiveData(thirdRequest.id)
+            .observe(this) { info ->
+                if (info?.state?.isFinished == true) {
+                    showResult("Third process is done")
+                    launchSecondNotificationService()
+                }
+            }
     }
 
     private fun getIdInputData(idKey: String, idValue: String) =
@@ -88,24 +103,58 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun launchNotificationService() {
-        // FIXED: Null safety untuk LiveData observer
         NotificationService.trackingCompletion.observe(this) { id ->
             id?.let {
                 showResult("Process for Notification Channel ID $it is done!")
             } ?: run {
-                showResult("Process completed but no channel ID returned")
+                showResult("First notification process completed but no channel ID returned")
             }
         }
 
         val serviceIntent = Intent(this, NotificationService::class.java).apply {
             putExtra(EXTRA_ID, "001")
         }
-
-        // FIXED: Null safety untuk startForegroundService
         try {
             ContextCompat.startForegroundService(this, serviceIntent)
         } catch (e: Exception) {
-            showResult("Failed to start notification service: ${e.message}")
+            showResult("Failed to start first notification service: ${e.message}")
+        }
+    }
+
+    private fun launchSecondNotificationService() {
+        SecondNotificationService.trackingCompletion.observe(this) { id ->
+            id?.let {
+                showResult("Process for Second Notification Channel ID $it is done!")
+            } ?: run {
+                showResult("Second notification process completed but no channel ID returned")
+            }
+        }
+
+        val serviceIntent = Intent(this, SecondNotificationService::class.java).apply {
+            putExtra(EXTRA_ID, "002")
+        }
+
+        // FIXED: Error handling untuk service start
+        try {
+            ContextCompat.startForegroundService(this, serviceIntent)
+        } catch (e: Exception) {
+            showResult("Failed to start second notification service: ${e.message}")
+        }
+    }
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        when (requestCode) {
+            1 -> {
+                if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                    showResult("Notification permission granted")
+                } else {
+                    showResult("Notification permission denied")
+                }
+            }
         }
     }
 
